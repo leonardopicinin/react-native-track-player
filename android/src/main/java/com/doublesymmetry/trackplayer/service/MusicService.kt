@@ -98,24 +98,27 @@ class MusicService : HeadlessJsMediaService() {
 
     @ExperimentalCoroutinesApi
     override fun onCreate() {
-        println("Chamou o onCreate")
         Timber.plant(object : Timber.DebugTree() {
             override fun createStackElementTag(element: StackTraceElement): String? {
                 return "RNTP-${element.className}:${element.methodName}"
             }
         })
+        
+        // Se já existir uma sessão, só reaproveite-a (não crie outra nem libere)
+        sessionRef?.let {
+            mediaSession = it
+            super.onCreate()
+            return
+        }
+
         fakePlayer = ExoPlayer.Builder(this).build()
+
         val openAppIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             // Add the Uri data so apps can identify that it was a notification click
             data = Uri.parse("trackplayer://notification.click")
             action = Intent.ACTION_VIEW
         }
-
-        try {
-            sessionRef?.release()
-            sessionRef = null
-        } catch (_: Throwable) {}
 
         mediaSession = MediaLibrarySession.Builder(this, fakePlayer,
             InnerMediaSessionCallback()
@@ -134,7 +137,6 @@ class MusicService : HeadlessJsMediaService() {
             .build()
 
         sessionRef = mediaSession
-        
         super.onCreate()
     }
 
@@ -226,7 +228,9 @@ class MusicService : HeadlessJsMediaService() {
             wakeMode = playerOptions?.getInt(WAKE_MODE, 0) ?: 0
         )
         player = QueuedAudioPlayer(this@MusicService, options)
-        fakePlayer.release()
+        if (this::fakePlayer.isInitialized) {
+            fakePlayer.release()
+        }
         mediaSession.player = player.forwardingPlayer
         observeEvents()
     }
@@ -818,18 +822,20 @@ class MusicService : HeadlessJsMediaService() {
 
     @MainThread
     override fun onDestroy() {
-        try {
-            Timber.d("Releasing media session and destroying player")
-            mediaSession.release()
+        Timber.d("Releasing resources in onDestroy()")
+
+        // libere a sessão apenas se ela for a atual guardada
+        if (sessionRef === mediaSession) {
+            try { mediaSession.release() } catch (_: Throwable) {}
             sessionRef = null
-            
-            if (::player.isInitialized) {
-                player.destroy()
-            }
-        } finally {
-            progressUpdateJob?.cancel()
-            super.onDestroy()
         }
+        
+        if (::player.isInitialized) {
+            try { player.destroy() } catch (_: Throwable) {}
+        }
+
+        progressUpdateJob?.cancel()
+        super.onDestroy()
     }
 
     fun onMediaKeyEvent(intent: Intent?): Boolean? {
