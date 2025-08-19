@@ -59,6 +59,9 @@ import kotlin.system.exitProcess
 @OptIn(UnstableApi::class)
 @MainThread
 class MusicService : HeadlessJsMediaService() {
+    companion object {
+        @Volatile private var sessionRef: MediaLibrarySession? = null
+    }
     private lateinit var player: QueuedAudioPlayer
     private val binder = MusicBinder()
     private val scope = MainScope()
@@ -110,6 +113,10 @@ class MusicService : HeadlessJsMediaService() {
             data = Uri.parse("trackplayer://notification.click")
             action = Intent.ACTION_VIEW
         }
+
+        sessionRef?.release()
+        sessionRef = null
+
         mediaSession = MediaLibrarySession.Builder(this, fakePlayer,
             InnerMediaSessionCallback()
         )
@@ -123,7 +130,10 @@ class MusicService : HeadlessJsMediaService() {
                     getPendingIntentFlags()
                 )
             )
+            .setId("rntp-" + android.os.Process.myPid())
             .build()
+
+        sessionRef = mediaSession
         super.onCreate()
     }
 
@@ -807,14 +817,18 @@ class MusicService : HeadlessJsMediaService() {
 
     @MainThread
     override fun onDestroy() {
-        if (::player.isInitialized) {
+        try {
             Timber.d("Releasing media session and destroying player")
             mediaSession.release()
-            player.destroy()
+            sessionRef = null
+            
+            if (::player.isInitialized) {
+                player.destroy()
+            }
+        } finally {
+            progressUpdateJob?.cancel()
+            super.onDestroy()
         }
-
-        progressUpdateJob?.cancel()
-        super.onDestroy()
     }
 
     fun onMediaKeyEvent(intent: Intent?): Boolean? {
