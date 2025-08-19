@@ -59,9 +59,6 @@ import kotlin.system.exitProcess
 @OptIn(UnstableApi::class)
 @MainThread
 class MusicService : HeadlessJsMediaService() {
-    companion object {
-        @Volatile private var sessionRef: MediaLibrarySession? = null
-    }
     private lateinit var player: QueuedAudioPlayer
     private val binder = MusicBinder()
     private val scope = MainScope()
@@ -114,8 +111,10 @@ class MusicService : HeadlessJsMediaService() {
             action = Intent.ACTION_VIEW
         }
 
-        sessionRef?.release()
-        sessionRef = null
+        try {
+            sessionRef?.release()
+            sessionRef = null
+        } catch (_: Throwable) {}
 
         mediaSession = MediaLibrarySession.Builder(this, fakePlayer,
             InnerMediaSessionCallback()
@@ -134,6 +133,7 @@ class MusicService : HeadlessJsMediaService() {
             .build()
 
         sessionRef = mediaSession
+        
         super.onCreate()
     }
 
@@ -1173,5 +1173,8 @@ class MusicService : HeadlessJsMediaService() {
 
         const val DEFAULT_JUMP_INTERVAL = 15.0
         const val DEFAULT_STOP_FOREGROUND_GRACE_PERIOD = 5
+
+        @Volatile
+        private var sessionRef: MediaLibrarySession? = null
     }
 }
