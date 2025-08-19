@@ -98,6 +98,7 @@ class MusicService : HeadlessJsMediaService() {
 
     @ExperimentalCoroutinesApi
     override fun onCreate() {
+        println("Chamou o onCreate")
         Timber.plant(object : Timber.DebugTree() {
             override fun createStackElementTag(element: StackTraceElement): String? {
                 return "RNTP-${element.className}:${element.methodName}"
