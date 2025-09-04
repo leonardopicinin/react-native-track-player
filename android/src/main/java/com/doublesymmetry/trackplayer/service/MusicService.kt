@@ -53,6 +53,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.flow
 import timber.log.Timber
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.system.exitProcess
 
@@ -123,6 +124,7 @@ class MusicService : HeadlessJsMediaService() {
                     getPendingIntentFlags()
                 )
             )
+            .setId("rntp-" + UUID.randomUUID().toString())
             .build()
         super.onCreate()
     }
@@ -922,7 +924,7 @@ class MusicService : HeadlessJsMediaService() {
             ) {
                 // HACK: attempt to wake up activity (for legacy APM). if not, start headless.
                 if (!selfWake(controller.packageName)) {
-                    onStartCommand(null, 0, 0)
+                    // onStartCommand(null, 0, 0)
                 }
             }
             return if (
