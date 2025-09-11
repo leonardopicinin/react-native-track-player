@@ -15,6 +15,7 @@ import com.doublesymmetry.kotlinaudio.models.PlayerOptions
 import com.doublesymmetry.kotlinaudio.players.QueuedAudioPlayer
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import java.util.UUID
 
 class MusicService : MediaLibraryService() {
     private val binder = MusicBinder()
@@ -65,6 +66,7 @@ class MusicService : MediaLibraryService() {
         }
         mediaLibrarySession = MediaLibrarySession.Builder(this, player.exoPlayer, callback)
         .setCustomLayout(customCommandButtons)
+        .setId("rntp-" + UUID.randomUUID().toString())
             .build()
     }
 
