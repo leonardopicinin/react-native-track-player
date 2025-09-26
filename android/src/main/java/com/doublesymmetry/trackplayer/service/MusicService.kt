@@ -13,13 +13,10 @@ import android.provider.Settings
 import android.view.KeyEvent
 import androidx.annotation.MainThread
 import androidx.annotation.OptIn
-import androidx.media.utils.MediaConstants
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.CacheBitmapLoader
-import androidx.media3.session.LibraryResult
-import androidx.media3.common.MediaItem
 import androidx.media3.common.Rating
 import androidx.media3.common.util.BitmapLoader
 import androidx.media3.exoplayer.ExoPlayer
@@ -47,8 +44,6 @@ import com.doublesymmetry.trackplayer.utils.CoilBitmapLoader
 import com.doublesymmetry.trackplayer.utils.buildMediaItem
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.jstasks.HeadlessJsTaskConfig
-import com.google.common.collect.ImmutableList
-import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.flow
@@ -808,11 +803,11 @@ class MusicService : HeadlessJsMediaService() {
     @MainThread
     override fun onDestroy() {
         if (::player.isInitialized) {
-            Timber.d("Releasing media session and destroying player")
-            mediaSession.release()
+            Timber.d("Destroying player")
             player.destroy()
         }
 
+        mediaSession.release()
         progressUpdateJob?.cancel()
         super.onDestroy()
     }
