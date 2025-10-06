@@ -121,6 +121,38 @@ class MusicService : HeadlessJsMediaService() {
         super.onCreate()
     }
 
+    private fun ensureSessionAlive(recreate: Boolean = false) {
+        // Sem API pública isReleased() na Media3 para sessão; recriamos sob demanda.
+        if (recreate || !this::mediaSession.isInitialized) {
+            Timber.w("Recreating MediaLibrarySession (recreate=$recreate)")
+
+            // (re)cria um player provisório para construir a sessão
+            fakePlayer = ExoPlayer.Builder(this).build()
+
+            val openAppIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                data = Uri.parse("trackplayer://notification.click")
+                action = Intent.ACTION_VIEW
+            }
+
+            mediaSession = MediaLibrarySession.Builder(this, fakePlayer, InnerMediaSessionCallback())
+                .setBitmapLoader(CacheBitmapLoader(CoilBitmapLoader(this)))
+                .setSessionActivity(
+                    PendingIntent.getActivity(
+                        this,
+                        0,
+                        openAppIntent,
+                        getPendingIntentFlags()
+                    )
+                )
+                .build()
+
+            if (this::player.isInitialized) {
+                mediaSession.player = player.forwardingPlayer
+            }
+        }
+    }
+
     enum class AppKilledPlaybackBehavior(val string: String) {
         CONTINUE_PLAYBACK("continue-playback"),
         PAUSE_PLAYBACK("pause-playback"),
@@ -695,11 +727,23 @@ class MusicService : HeadlessJsMediaService() {
         val intentAction = intent?.action
         Timber.d("intentAction = $intentAction")
         return if (intentAction != null) {
-            super.onBind(intent)
+            try {
+                super.onBind(intent)
+            } catch (e: IllegalArgumentException) {
+                // Casos de PROD: "session is already released"
+                if (e.message?.contains("session is already released") == true) {
+                    Timber.w("MediaSession was released before bind. Recreating and retrying bind.")
+                    ensureSessionAlive(recreate = true)
+                    super.onBind(intent)
+                } else {
+                    throw e
+                }
+            }
         } else {
             binder
         }
     }
+
 
     override fun onUnbind(intent: Intent?): Boolean {
         val intentAction = intent?.action
@@ -714,37 +758,37 @@ class MusicService : HeadlessJsMediaService() {
 
     @MainThread
     override fun onTaskRemoved(rootIntent: Intent?) {
-    onUnbind(rootIntent)
-    Timber.d("isInitialized = ${::player.isInitialized}, appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
+        onUnbind(rootIntent)
+        Timber.d("isInitialized = ${::player.isInitialized}, appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
 
-    if (!::player.isInitialized) {
-        // NÃO liberar a session aqui
-        stopSelf()
-        return
-    }
-
-    when (appKilledPlaybackBehavior) {
-        AppKilledPlaybackBehavior.PAUSE_PLAYBACK -> {
-            Timber.d("Pausing playback - appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
-            player.pause()
-        }
-        AppKilledPlaybackBehavior.STOP_PLAYBACK_AND_REMOVE_NOTIFICATION -> {
-            Timber.d("Killing service - appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
-            player.clear()
-            player.stop()
-            scope.cancel()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                stopForeground(STOP_FOREGROUND_REMOVE)
-            } else {
-                @Suppress("DEPRECATION")
-                stopForeground(true)
-            }
-            // NÃO chamar onDestroy() nem exitProcess(0) aqui
+        if (!::player.isInitialized) {
+            // Não solte a sessão aqui; deixe o ciclo de vida chamá-la em onDestroy()
             stopSelf()
+            return
         }
-        else -> {}
+
+        when (appKilledPlaybackBehavior) {
+            AppKilledPlaybackBehavior.PAUSE_PLAYBACK -> {
+                Timber.d("Pausing playback - appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
+                player.pause()
+            }
+            AppKilledPlaybackBehavior.STOP_PLAYBACK_AND_REMOVE_NOTIFICATION -> {
+                Timber.d("Killing service - appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
+                player.clear()
+                player.stop()
+                scope.cancel()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                } else {
+                    @Suppress("DEPRECATION")
+                    stopForeground(true)
+                }
+                // nada de onDestroy()/exitProcess(0) aqui
+                stopSelf()
+            }
+            else -> {}
+        }
     }
-}
 
     @SuppressLint("VisibleForTests")
     private fun selfWake(clientPackageName: String): Boolean {
@@ -777,6 +821,8 @@ class MusicService : HeadlessJsMediaService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession {
         Timber.d("${controllerInfo.packageName}")
+        // (barato) assegura que temos uma sessão válida para devolver
+        ensureSessionAlive()
         return mediaSession
     }
 
@@ -792,7 +838,9 @@ class MusicService : HeadlessJsMediaService() {
             player.destroy()
         }
 
-        mediaSession.release()
+        runCatching { mediaSession.release() }
+            .onFailure { e -> Timber.w(e, "mediaSession.release failed (already released?)") }
+            
         progressUpdateJob?.cancel()
         super.onDestroy()
     }
