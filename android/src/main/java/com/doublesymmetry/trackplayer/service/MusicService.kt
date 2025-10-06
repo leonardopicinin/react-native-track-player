@@ -717,7 +717,7 @@ class MusicService : HeadlessJsMediaService() {
         onUnbind(rootIntent)
         Timber.d("isInitialized = ${::player.isInitialized}, appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
         if (!::player.isInitialized) {
-            mediaSession.release()
+            stopSelf()
             return
         }
 
@@ -728,12 +728,10 @@ class MusicService : HeadlessJsMediaService() {
             }
             AppKilledPlaybackBehavior.STOP_PLAYBACK_AND_REMOVE_NOTIFICATION -> {
                 Timber.d("Killing service - appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
-                mediaSession.release()
                 player.clear()
                 player.stop()
                 // HACK: the service first stops, then starts, then call onTaskRemove. Why system
                 // registers the service being restarted?
-                player.destroy()
                 scope.cancel()
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
@@ -741,10 +739,6 @@ class MusicService : HeadlessJsMediaService() {
                     @Suppress("DEPRECATION")
                     stopForeground(true)
                 }
-                onDestroy()
-                // https://github.com/androidx/media/issues/27#issuecomment-1456042326
-                stopSelf()
-                exitProcess(0)
             }
 
             else -> {}
