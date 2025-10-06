@@ -714,36 +714,37 @@ class MusicService : HeadlessJsMediaService() {
 
     @MainThread
     override fun onTaskRemoved(rootIntent: Intent?) {
-        onUnbind(rootIntent)
-        Timber.d("isInitialized = ${::player.isInitialized}, appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
-        if (!::player.isInitialized) {
-            stopSelf()
-            return
-        }
+    onUnbind(rootIntent)
+    Timber.d("isInitialized = ${::player.isInitialized}, appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
 
-        when (appKilledPlaybackBehavior) {
-            AppKilledPlaybackBehavior.PAUSE_PLAYBACK -> {
-                Timber.d("Pausing playback - appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
-                player.pause()
-            }
-            AppKilledPlaybackBehavior.STOP_PLAYBACK_AND_REMOVE_NOTIFICATION -> {
-                Timber.d("Killing service - appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
-                player.clear()
-                player.stop()
-                // HACK: the service first stops, then starts, then call onTaskRemove. Why system
-                // registers the service being restarted?
-                scope.cancel()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                } else {
-                    @Suppress("DEPRECATION")
-                    stopForeground(true)
-                }
-            }
-
-            else -> {}
-        }
+    if (!::player.isInitialized) {
+        // NÃO liberar a session aqui
+        stopSelf()
+        return
     }
+
+    when (appKilledPlaybackBehavior) {
+        AppKilledPlaybackBehavior.PAUSE_PLAYBACK -> {
+            Timber.d("Pausing playback - appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
+            player.pause()
+        }
+        AppKilledPlaybackBehavior.STOP_PLAYBACK_AND_REMOVE_NOTIFICATION -> {
+            Timber.d("Killing service - appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
+            player.clear()
+            player.stop()
+            scope.cancel()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+            // NÃO chamar onDestroy() nem exitProcess(0) aqui
+            stopSelf()
+        }
+        else -> {}
+    }
+}
 
     @SuppressLint("VisibleForTests")
     private fun selfWake(clientPackageName: String): Boolean {
