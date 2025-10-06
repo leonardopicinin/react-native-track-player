@@ -70,6 +70,8 @@ class MusicService : HeadlessJsMediaService() {
     private var lastWake: Long = 0
     var onStartCommandIntentValid: Boolean = true
 
+    @Volatile private var mediaSessionReleased: Boolean = false
+
     fun acquireWakeLock() {
         acquireWakeLockNow(this)
     }
@@ -118,7 +120,44 @@ class MusicService : HeadlessJsMediaService() {
                 )
             )
             .build()
+        
+        mediaSessionReleased = false
         super.onCreate()
+    }
+
+    private fun buildMediaSession(playerForSession: Player): MediaLibrarySession {
+        val openAppIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            data = Uri.parse("trackplayer://notification.click")
+            action = Intent.ACTION_VIEW
+        }
+        val newSession = MediaLibrarySession.Builder(this, playerForSession, InnerMediaSessionCallback())
+            .setBitmapLoader(CacheBitmapLoader(CoilBitmapLoader(this)))
+            .setSessionActivity(
+                PendingIntent.getActivity(this, 0, openAppIntent, getPendingIntentFlags())
+            )
+            .build()
+        mediaSessionReleased = false
+        return newSession
+    }
+
+    private fun ensureValidMediaSession() {
+        if (!this::mediaSession.isInitialized || mediaSessionReleased) {
+            val p = if (this::player.isInitialized) {
+                player.forwardingPlayer
+            } else {
+                // recria um player "fake" para a sessão até o player real existir
+                if (this::fakePlayer.isInitialized) fakePlayer else ExoPlayer.Builder(this).build().also { fakePlayer = it }
+            }
+            mediaSession = buildMediaSession(p)
+        }
+    }
+
+    private fun releaseMediaSessionIfNeeded() {
+        if (this::mediaSession.isInitialized && !mediaSessionReleased) {
+            mediaSession.release()
+            mediaSessionReleased = true
+        }
     }
 
     enum class AppKilledPlaybackBehavior(val string: String) {
@@ -695,10 +734,9 @@ class MusicService : HeadlessJsMediaService() {
         val intentAction = intent?.action
         Timber.d("intentAction = $intentAction")
         return if (intentAction != null) {
+            ensureValidMediaSession()
             super.onBind(intent)
-        } else {
-            binder
-        }
+        } else binder
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
@@ -717,7 +755,7 @@ class MusicService : HeadlessJsMediaService() {
         onUnbind(rootIntent)
         Timber.d("isInitialized = ${::player.isInitialized}, appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
         if (!::player.isInitialized) {
-            mediaSession.release()
+            releaseMediaSessionIfNeeded()
             return
         }
 
@@ -728,7 +766,7 @@ class MusicService : HeadlessJsMediaService() {
             }
             AppKilledPlaybackBehavior.STOP_PLAYBACK_AND_REMOVE_NOTIFICATION -> {
                 Timber.d("Killing service - appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
-                mediaSession.release()
+                releaseMediaSessionIfNeeded()
                 player.clear()
                 player.stop()
                 // HACK: the service first stops, then starts, then call onTaskRemove. Why system
@@ -782,6 +820,7 @@ class MusicService : HeadlessJsMediaService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession {
         Timber.d("${controllerInfo.packageName}")
+        ensureValidMediaSession()
         return mediaSession
     }
 
@@ -797,7 +836,7 @@ class MusicService : HeadlessJsMediaService() {
             player.destroy()
         }
 
-        mediaSession.release()
+        releaseMediaSessionIfNeeded()
         progressUpdateJob?.cancel()
         super.onDestroy()
     }
