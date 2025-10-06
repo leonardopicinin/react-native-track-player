@@ -695,9 +695,36 @@ class MusicService : HeadlessJsMediaService() {
         val intentAction = intent?.action
         Timber.d("intentAction = $intentAction")
         return if (intentAction != null) {
-            super.onBind(intent)
-        } else {
-            binder
+            try {
+                super.onBind(intent)
+            } catch (e: IllegalArgumentException) {
+                if (e.message?.contains("session is already released") == true) {
+                    Timber.w("MediaSession was released before bind. Recreating and retrying bind.")
+                    ensureSessionAlive(recreate = true)  // função abaixo
+                    super.onBind(intent)
+                } else {
+                    throw e
+                }
+            }
+        } else binder
+    }
+
+    private fun ensureSessionAlive(recreate: Boolean = false) {
+        if (recreate || !this::mediaSession.isInitialized) {
+            Timber.w("Recreating MediaLibrarySession (recreate=$recreate)")
+            fakePlayer = ExoPlayer.Builder(this).build()
+            val openAppIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                data = Uri.parse("trackplayer://notification.click")
+                action = Intent.ACTION_VIEW
+            }
+            mediaSession = MediaLibrarySession.Builder(this, fakePlayer, InnerMediaSessionCallback())
+                .setBitmapLoader(CacheBitmapLoader(CoilBitmapLoader(this)))
+                .setSessionActivity(PendingIntent.getActivity(this, 0, openAppIntent, getPendingIntentFlags()))
+                .build()
+            if (this::player.isInitialized) {
+                mediaSession.player = player.forwardingPlayer
+            }
         }
     }
 
@@ -717,7 +744,7 @@ class MusicService : HeadlessJsMediaService() {
         onUnbind(rootIntent)
         Timber.d("isInitialized = ${::player.isInitialized}, appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
         if (!::player.isInitialized) {
-            mediaSession.release()
+            stopSelf()
             return
         }
 
@@ -728,7 +755,6 @@ class MusicService : HeadlessJsMediaService() {
             }
             AppKilledPlaybackBehavior.STOP_PLAYBACK_AND_REMOVE_NOTIFICATION -> {
                 Timber.d("Killing service - appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
-                mediaSession.release()
                 player.clear()
                 player.stop()
                 // HACK: the service first stops, then starts, then call onTaskRemove. Why system
@@ -741,10 +767,8 @@ class MusicService : HeadlessJsMediaService() {
                     @Suppress("DEPRECATION")
                     stopForeground(true)
                 }
-                onDestroy()
                 // https://github.com/androidx/media/issues/27#issuecomment-1456042326
                 stopSelf()
-                exitProcess(0)
             }
 
             else -> {}
@@ -796,8 +820,8 @@ class MusicService : HeadlessJsMediaService() {
             Timber.d("Destroying player")
             player.destroy()
         }
-
-        mediaSession.release()
+        runCatching { mediaSession.release() }
+            .onFailure { e -> Timber.w(e, "mediaSession.release failed (already released?)") }
         progressUpdateJob?.cancel()
         super.onDestroy()
     }
