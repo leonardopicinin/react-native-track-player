@@ -779,10 +779,7 @@ class MusicService : HeadlessJsMediaService() {
                     @Suppress("DEPRECATION")
                     stopForeground(true)
                 }
-                onDestroy()
-                // https://github.com/androidx/media/issues/27#issuecomment-1456042326
                 stopSelf()
-                exitProcess(0)
             }
 
             else -> {}
